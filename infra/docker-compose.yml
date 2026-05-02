@@ -1,0 +1,81 @@
+# This file starts all our databases and Kafka with ONE command: docker compose up -d
+# Think of it as a recipe — "start these 5 programs for me"
+
+version: '3.8'  # which version of docker-compose format we are using
+
+services:  # "services" means "programs to run"
+
+  # PROGRAM 1: Zookeeper — Kafka's helper, manages Kafka's settings
+  # (You don't interact with this directly, Kafka needs it internally)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0  # download this pre-built program
+    container_name: ims-zookeeper            # give it a name
+    environment:                             # settings/config for the program
+      ZOOKEEPER_CLIENT_PORT: 2181            # port number it listens on
+      ZOOKEEPER_TICK_TIME: 2000             # internal heartbeat every 2 seconds
+    ports:
+      - "2181:2181"  # my laptop port 2181 → container port 2181
+
+  # PROGRAM 2: Kafka — our "mailbox" for signals
+  # Signals come in fast → Kafka holds them → consumer reads slowly
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: ims-kafka
+    depends_on:
+      - zookeeper  # start zookeeper FIRST before kafka
+    ports:
+      - "9092:9092"  # kafka listens on port 9092
+    environment:
+      KAFKA_BROKER_ID: 1                    # kafka's ID number (we have 1 kafka)
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181  # tell kafka where zookeeper is
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      # above line: two addresses for kafka — one for our laptop, one for inside docker
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1  # we have 1 kafka so replication=1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"    # auto create topic if not exists
+
+  # PROGRAM 3: PostgreSQL — our main database (like MySQL but better)
+  # Stores Work Items and RCA records (structured, important data)
+  postgres:
+    image: postgres:16
+    container_name: ims-postgres
+    environment:
+      POSTGRES_USER: ims_user      # username to login to postgres
+      POSTGRES_PASSWORD: ims_pass  # password
+      POSTGRES_DB: ims_db          # database name (like a folder of tables)
+    ports:
+      - "5432:5432"  # postgres default port
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # volumes = save data on laptop disk so data survives restart
+
+  # PROGRAM 4: MongoDB — stores raw signals (unstructured, high volume)
+  # Like a folder of JSON files, very fast for writes
+  mongodb:
+    image: mongo:7
+    container_name: ims-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ims_user
+      MONGO_INITDB_ROOT_PASSWORD: ims_pass
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # PROGRAM 5: Redis — super fast memory storage (like a Python dictionary)
+  # We use it for: debounce keys, dashboard cache
+  redis:
+    image: redis:7-alpine  # alpine = smaller/lighter version
+    container_name: ims-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes  # save data to disk too
+    volumes:
+      - redis_data:/data
+
+# these are named storage spaces on your laptop's hard drive
+volumes:
+  postgres_data:  # postgres data saved here
+  mongo_data:     # mongodb data saved here
+  redis_data:     # redis data saved here
